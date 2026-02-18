@@ -2080,17 +2080,17 @@ def render_sidebar() -> Tuple[Optional[pd.DataFrame], str, str]:
                     _enroll_opts = df['enrollment_enrollment_status'].dropna().unique().tolist()
                     st.multiselect(
                         "Enrollment Status", options=_enroll_opts,
-                        default=_enroll_opts, key="fin_enroll_status")
+                        default=_enroll_opts, key="fin_filter_enroll_status")
                 if _has_enrollment_type:
                     _type_opts = df['enrollment_type'].dropna().unique().tolist()
                     st.multiselect(
                         "Enrollment Type", options=_type_opts,
-                        default=_type_opts, key="fin_enroll_type")
+                        default=_type_opts, key="fin_filter_enroll_type")
                 if _has_cohort:
                     _cohort_opts = sorted(df['cohort_year'].dropna().unique().tolist())
                     st.multiselect(
                         "Cohort Year", options=_cohort_opts, default=[],
-                        key="fin_cohort_year")
+                        key="fin_filter_cohort")
 
                 # ── Demographics ──
                 if _has_nationality or _has_gender:
@@ -2099,31 +2099,31 @@ def render_sidebar() -> Tuple[Optional[pd.DataFrame], str, str]:
                     _nat_opts = sorted(df['nationality'].dropna().unique().tolist())
                     st.multiselect(
                         "Nationality", options=_nat_opts, default=[],
-                        key="fin_nationality")
+                        key="fin_filter_nationality")
                     # UAE National filter (matches student_360)
                     st.selectbox(
                         "UAE National Status",
                         options=["All Students", "UAE Nationals Only", "International Students Only"],
-                        index=0, key="fin_uae_national")
+                        index=0, key="fin_filter_uae_national")
                 if _has_gender:
                     _gender_opts = df['gender'].dropna().unique().tolist()
                     st.multiselect(
                         "Gender", options=_gender_opts, default=_gender_opts,
-                        key="fin_gender")
+                        key="fin_filter_gender")
 
                 # ── Academic Performance ──
                 if _has_gpa:
                     st.markdown("**🎓 Academic Performance**")
                     st.slider(
                         "GPA Range", min_value=0.0, max_value=4.0,
-                        value=(0.0, 4.0), step=0.1, key="fin_gpa_range")
+                        value=(0.0, 4.0), step=0.1, key="fin_filter_gpa")
                     # Academic Risk Level (matches student_360)
                     _risk_opts = ["High Performer (3.5+)", "Mid Performer (2.5-3.5)", "At Risk (<2.5)"]
                     st.multiselect(
                         "Academic Risk Level",
                         options=_risk_opts,
                         default=_risk_opts,
-                        key="fin_risk_level")
+                        key="fin_filter_risk_level")
 
                 # ── Financial ──
                 if _has_aid:
@@ -2131,12 +2131,12 @@ def render_sidebar() -> Tuple[Optional[pd.DataFrame], str, str]:
                     st.selectbox(
                         "Financial Aid Status",
                         options=["All Records", "With Financial Aid", "Without Financial Aid"],
-                        index=0, key="fin_aid_status")
+                        index=0, key="fin_filter_aid_status")
                     _max_aid = float(df['financial_aid_monetary_amount'].max() or 0)
                     if _max_aid > 0:
                         st.slider(
                             "Aid Amount Range (AED)", min_value=0.0, max_value=_max_aid,
-                            value=(0.0, _max_aid), key="fin_aid_range")
+                            value=(0.0, _max_aid), key="fin_filter_aid_range")
 
                 # ── Housing ──
                 if _has_housing:
@@ -2144,7 +2144,7 @@ def render_sidebar() -> Tuple[Optional[pd.DataFrame], str, str]:
                     st.selectbox(
                         "Housing Status",
                         options=["All Students", "On-Campus", "Off-Campus"],
-                        index=0, key="fin_housing_status")
+                        index=0, key="fin_filter_housing")
 
                 # ── Special Categories ──
                 if _has_first_gen:
@@ -2152,7 +2152,7 @@ def render_sidebar() -> Tuple[Optional[pd.DataFrame], str, str]:
                     st.selectbox(
                         "First Generation Status",
                         options=["All Students", "First Generation", "Not First Generation"],
-                        index=0, key="fin_first_gen")
+                        index=0, key="fin_filter_first_gen")
 
         # ── Data Management ──
         st.markdown("---")
@@ -8321,17 +8321,20 @@ def main():
         """, unsafe_allow_html=True)
         return
 
-    # ── Compute roles & KPIs ──
-    col_roles = detect_financial_columns(df)
-    kpis      = compute_financial_kpis(df, col_roles)
+    # ── Apply sidebar filters (fdf drives ALL KPIs, charts, tabs) ──
+    fdf = apply_filters(df)
+
+    # ── Compute roles & KPIs on filtered data ──
+    col_roles = detect_financial_columns(fdf)
+    kpis      = compute_financial_kpis(fdf, col_roles)
 
     # ── Detect entity/domain and store vocabulary in session state ──
-    _entity_type = detect_entity_type(df)
+    _entity_type = detect_entity_type(fdf)
     st.session_state['_entity_vocab'] = ENTITY_TERMINOLOGY[_entity_type]
     st.session_state['_entity_type']  = _entity_type
 
-    # ── Advisory: generate or use cached ──
-    data_sig = f"{len(df)}-{list(df.columns)}-{model}"
+    # ── Advisory: generate or use cached (keyed to filtered row count) ──
+    data_sig = f"{len(fdf)}-{list(fdf.columns)}-{model}"
     cached_advisory = st.session_state.get('fin_advisory_cache', {})
 
     advisory = cached_advisory.get(data_sig)
@@ -8359,7 +8362,7 @@ def main():
                     cache = st.session_state.get('fin_advisory_cache', {})
                     cache.pop(data_sig, None)
                     st.session_state['fin_advisory_cache'] = cache
-                    narrative_key = f"narrative-{len(df)}-{list(df.columns)}"
+                    narrative_key = f"narrative-{len(fdf)}-{list(fdf.columns)}"
                     st.session_state.pop(narrative_key, None)
                     st.session_state.pop('_last_advisory_sig', None)
                     st.rerun()
@@ -8367,7 +8370,7 @@ def main():
                 # Rule-based advisory is showing — offer LLM upgrade
                 if st.button("✨ Generate AI Advisory Report", key="fin_generate_advisory"):
                     with st.spinner("Analysing your financial data with AI..."):
-                        ai_advisory = generate_financial_advisory(df, kpis, col_roles, model, ollama_url)
+                        ai_advisory = generate_financial_advisory(fdf, kpis, col_roles, model, ollama_url)
                         if ai_advisory and isinstance(ai_advisory, dict):
                             ai_advisory['_source'] = 'llm'
                         else:
@@ -8375,7 +8378,7 @@ def main():
                         cache = st.session_state.get('fin_advisory_cache', {})
                         cache[data_sig] = ai_advisory
                         st.session_state['fin_advisory_cache'] = cache
-                        narrative_key = f"narrative-{len(df)}-{list(df.columns)}"
+                        narrative_key = f"narrative-{len(fdf)}-{list(fdf.columns)}"
                         st.session_state.pop(narrative_key, None)
                         st.session_state.pop('_last_advisory_sig', None)
                         st.rerun()
@@ -8394,16 +8397,19 @@ def main():
         )
 
     # ── Build narrative (always rule-based; LLM prose on demand) ──
-    narrative_key = f"narrative-{len(df)}-{list(df.columns)}"
+    narrative_key = f"narrative-{len(fdf)}-{list(fdf.columns)}"
     if narrative_key not in st.session_state:
-        st.session_state[narrative_key] = build_financial_narrative(df, kpis, col_roles, advisory)
+        st.session_state[narrative_key] = build_financial_narrative(fdf, kpis, col_roles, advisory)
     narrative = st.session_state[narrative_key]
 
     # Refresh narrative if advisory just changed
     if advisory and st.session_state.get('_last_advisory_sig') != data_sig:
-        st.session_state[narrative_key] = build_financial_narrative(df, kpis, col_roles, advisory)
+        st.session_state[narrative_key] = build_financial_narrative(fdf, kpis, col_roles, advisory)
         narrative = st.session_state[narrative_key]
         st.session_state['_last_advisory_sig'] = data_sig
+
+    # ── Apply sidebar filters once (all tabs use filtered data) ──
+    fdf = apply_filters(df)
 
     # ── Main tabs ──
     tabs = st.tabs([
@@ -8417,23 +8423,23 @@ def main():
     ])
 
     with tabs[0]:
-        render_command_centre_tab(df, kpis, col_roles)
+        render_command_centre_tab(fdf, kpis, col_roles)
 
     with tabs[1]:
-        render_narrative_tab(df, kpis, col_roles, advisory, narrative, model, ollama_url)
+        render_narrative_tab(fdf, kpis, col_roles, advisory, narrative, model, ollama_url)
 
     with tabs[2]:
-        render_advisory_tab(df, kpis, col_roles, advisory)
+        render_advisory_tab(fdf, kpis, col_roles, advisory)
 
     with tabs[3]:
-        render_forward_guidance_tab(df, kpis, col_roles, advisory)
+        render_forward_guidance_tab(fdf, kpis, col_roles, advisory)
 
     with tabs[4]:
-        render_data_explorer_tab(df, col_roles, kpis)
+        render_data_explorer_tab(fdf, col_roles, kpis)
 
     with tabs[5]:
         render_financial_intelligence_tab(
-            apply_filters(df),
+            fdf,
             kpis=kpis,
             col_roles=col_roles,
             advisory=advisory,
@@ -8442,7 +8448,7 @@ def main():
 
     with tabs[6]:
         render_journey2_tab(
-            apply_filters(df),
+            fdf,
             kpis=kpis,
             col_roles=col_roles,
             advisory=advisory,
@@ -8481,7 +8487,7 @@ def main():
     _m_risk_str      = _fmt(_m_rev * 0.15, prefix="$")
     _m_cat_count     = len(df.select_dtypes(include="object").columns)
     _m_complete_str  = f"{100 - _m_miss:.1f}%"
-    _m_rows_str      = f"{len(df):,}"
+    _m_rows_str      = f"{len(fdf):,}"
     _m_dups_str      = f"{_m_dups:,}"
 
     # 30-day margin priority
