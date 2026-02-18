@@ -1940,7 +1940,7 @@ def render_sidebar() -> Tuple[Optional[pd.DataFrame], str, str]:
     """Render sidebar; returns (dataframe, model, url)."""
     with st.sidebar:
         # Logo
-        logo_path = r"D:\exalio_work\Exalio_profile\exalio-logo-main-8bbf05.svg"
+        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "exalio-logo.svg")
         try:
             st.image(logo_path, use_container_width=True)
         except Exception:
@@ -1950,7 +1950,7 @@ def render_sidebar() -> Tuple[Optional[pd.DataFrame], str, str]:
         st.markdown("### 📂 Data Source")
 
         df = None
-        _PRELOADED_PATH = r"D:\exalio_work\RFP\Ankbut\MVP\cons\Sample DataSet\Student_360_View.csv"
+        _PRELOADED_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "Student_360_View.csv")
         _preloaded_label = "Student_360_View (preloaded)"
         source = st.radio(
             "Load data from:",
