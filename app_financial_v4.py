@@ -74,6 +74,7 @@ def extract_json_from_response(text: str):
     return None
 
 
+import os
 import streamlit as st
 import pandas as pd
 import numpy as np
