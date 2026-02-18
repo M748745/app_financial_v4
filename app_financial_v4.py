@@ -2942,13 +2942,15 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     # ── Enrollment status ──
     if 'enrollment_enrollment_status' in fdf.columns:
         _sel = ss.get('fin_filter_enroll_status')
-        if _sel:
+        _all_enroll = fdf['enrollment_enrollment_status'].dropna().unique().tolist()
+        if _sel is not None and len(_sel) > 0 and set(_sel) != set(_all_enroll):
             fdf = fdf[fdf['enrollment_enrollment_status'].isin(_sel)]
 
     # ── Enrollment type ──
     if 'enrollment_type' in fdf.columns:
         _sel = ss.get('fin_filter_enroll_type')
-        if _sel:
+        _all_types = fdf['enrollment_type'].dropna().unique().tolist()
+        if _sel is not None and len(_sel) > 0 and set(_sel) != set(_all_types):
             fdf = fdf[fdf['enrollment_type'].isin(_sel)]
 
     # ── Cohort year ──
@@ -2962,28 +2964,38 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
         _sel = ss.get('fin_filter_nationality')
         if _sel:
             fdf = fdf[fdf['nationality'].isin(_sel)]
-        # UAE national filter
-        _uae = ss.get('fin_filter_uae_national', 'All Students')
-        if _uae == 'UAE Nationals Only':
-            fdf = fdf[fdf['nationality'] == 'AE']
-        elif _uae == 'International Students Only':
-            fdf = fdf[fdf['nationality'] != 'AE']
+    # UAE national filter — uses citizenship_type if available, else nationality code
+    _uae = ss.get('fin_filter_uae_national', 'All Students')
+    if _uae != 'All Students':
+        if 'citizenship_type' in fdf.columns:
+            if _uae == 'UAE Nationals Only':
+                fdf = fdf[fdf['citizenship_type'].str.contains('UAE', case=False, na=False)]
+            elif _uae == 'International Students Only':
+                fdf = fdf[~fdf['citizenship_type'].str.contains('UAE', case=False, na=False)]
+        elif 'nationality' in fdf.columns:
+            if _uae == 'UAE Nationals Only':
+                fdf = fdf[fdf['nationality'].isin(['AE', 'UAE', 'Emirati'])]
+            elif _uae == 'International Students Only':
+                fdf = fdf[~fdf['nationality'].isin(['AE', 'UAE', 'Emirati'])]
 
     # ── Gender ──
     if 'gender' in fdf.columns:
         _sel = ss.get('fin_filter_gender')
-        if _sel:
+        _all_gender = fdf['gender'].dropna().unique().tolist()
+        if _sel is not None and len(_sel) > 0 and set(_sel) != set(_all_gender):
             fdf = fdf[fdf['gender'].isin(_sel)]
 
     # ── GPA range ──
     if 'cumulative_gpa' in fdf.columns:
         _gpa = ss.get('fin_filter_gpa', (0.0, 4.0))
-        fdf = fdf[(fdf['cumulative_gpa'] >= _gpa[0]) & (fdf['cumulative_gpa'] <= _gpa[1])]
+        if _gpa and (_gpa[0] > 0.0 or _gpa[1] < 4.0):
+            fdf = fdf[(pd.to_numeric(fdf['cumulative_gpa'], errors='coerce') >= _gpa[0]) &
+                      (pd.to_numeric(fdf['cumulative_gpa'], errors='coerce') <= _gpa[1])]
 
         # Academic Risk Level
-        _risk = ss.get('fin_filter_risk_level',
-                       ['High Performer (3.5+)', 'Mid Performer (2.5-3.5)', 'At Risk (<2.5)'])
-        if _risk and len(_risk) < 3:
+        _all_risk = ['High Performer (3.5+)', 'Mid Performer (2.5-3.5)', 'At Risk (<2.5)']
+        _risk = ss.get('fin_filter_risk_level', _all_risk)
+        if _risk is not None and len(_risk) > 0 and set(_risk) != set(_all_risk):
             _conditions = []
             if 'High Performer (3.5+)' in _risk:
                 _conditions.append(fdf['cumulative_gpa'] >= 3.5)
@@ -8333,8 +8345,16 @@ def main():
     st.session_state['_entity_vocab'] = ENTITY_TERMINOLOGY[_entity_type]
     st.session_state['_entity_type']  = _entity_type
 
-    # ── Advisory: generate or use cached (keyed to filtered row count) ──
-    data_sig = f"{len(fdf)}-{list(fdf.columns)}-{model}"
+    # ── Advisory: keyed to filter state so any filter change invalidates cache ──
+    _filter_keys = [
+        'fin_student_search','fin_filter_enroll_status','fin_filter_enroll_type',
+        'fin_filter_cohort','fin_filter_nationality','fin_filter_uae_national',
+        'fin_filter_gender','fin_filter_gpa','fin_filter_risk_level',
+        'fin_filter_aid_status','fin_filter_aid_range',
+        'fin_filter_housing','fin_filter_first_gen',
+    ]
+    _filter_sig = str({k: st.session_state.get(k) for k in _filter_keys})
+    data_sig = f"{len(df)}-{list(df.columns)}-{model}-{_filter_sig}"
     cached_advisory = st.session_state.get('fin_advisory_cache', {})
 
     advisory = cached_advisory.get(data_sig)
@@ -8362,7 +8382,7 @@ def main():
                     cache = st.session_state.get('fin_advisory_cache', {})
                     cache.pop(data_sig, None)
                     st.session_state['fin_advisory_cache'] = cache
-                    narrative_key = f"narrative-{len(fdf)}-{list(fdf.columns)}"
+                    narrative_key = f"narrative-{data_sig}"
                     st.session_state.pop(narrative_key, None)
                     st.session_state.pop('_last_advisory_sig', None)
                     st.rerun()
@@ -8378,7 +8398,7 @@ def main():
                         cache = st.session_state.get('fin_advisory_cache', {})
                         cache[data_sig] = ai_advisory
                         st.session_state['fin_advisory_cache'] = cache
-                        narrative_key = f"narrative-{len(fdf)}-{list(fdf.columns)}"
+                        narrative_key = f"narrative-{data_sig}"
                         st.session_state.pop(narrative_key, None)
                         st.session_state.pop('_last_advisory_sig', None)
                         st.rerun()
@@ -8397,7 +8417,7 @@ def main():
         )
 
     # ── Build narrative (always rule-based; LLM prose on demand) ──
-    narrative_key = f"narrative-{len(fdf)}-{list(fdf.columns)}"
+    narrative_key = f"narrative-{data_sig}"
     if narrative_key not in st.session_state:
         st.session_state[narrative_key] = build_financial_narrative(fdf, kpis, col_roles, advisory)
     narrative = st.session_state[narrative_key]
